@@ -137,10 +137,15 @@ export const copilotAdapter: CliAdapter = {
       }
 
       case 'tool.execution_complete': {
+        // In Copilot CLI, tool.execution_complete means "dispatch complete" —
+        // the tool framework has handled the call, but for task/sub-agent tools
+        // the actual work is still running. We treat this as toolExecuting
+        // (resets permission timer) and let assistant.turn_end clear tools.
         return [
           {
-            kind: PARSED_EVENT_KINDS.toolDone,
-            toolId: event.data.toolCallId ?? event.id,
+            kind: PARSED_EVENT_KINDS.toolExecuting,
+            parentToolId: event.data.toolCallId ?? event.id,
+            progressType: 'tool_execution_complete',
           },
         ];
       }
