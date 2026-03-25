@@ -17,15 +17,22 @@ import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import type { AgentState, PersistedAgent } from './types.js';
 
 /**
- * Wrapper for Claude-specific project dir logic.
- * Used by PixelAgentsViewProvider for project-scan (Claude /clear detection).
+ * Compute the Claude project dir path for /clear detection and terminal adoption.
+ * This works even when Claude CLI isn't installed — it just derives the path
+ * from the workspace folder name. The directory may not exist if Claude
+ * has never been used in this workspace.
  */
 export function getProjectDirPath(cwd?: string): string | null {
   const adapter = getAdapter(CLI_ADAPTER_IDS.claude);
-  if (!adapter?.getProjectDir) return null;
   const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspacePath) return null;
-  return adapter.getProjectDir(workspacePath);
+
+  // Use adapter if available, otherwise compute directly (matches Claude's convention)
+  if (adapter?.getProjectDir) {
+    return adapter.getProjectDir(workspacePath);
+  }
+  const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
+  return path.join(os.homedir(), '.claude', 'projects', dirName);
 }
 
 export async function launchNewTerminal(

@@ -173,20 +173,22 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         console.log('[Extension] workspaceRoot:', workspaceRoot);
         console.log('[Extension] projectDir:', projectDir);
-        ensureProjectScan(
-          projectDir,
-          this.knownJsonlFiles,
-          this.projectScanTimer,
-          this.activeAgentId,
-          this.nextAgentId,
-          this.agents,
-          this.fileWatchers,
-          this.pollingTimers,
-          this.waitingTimers,
-          this.permissionTimers,
-          this.webview,
-          this.persistAgents,
-        );
+        if (projectDir) {
+          ensureProjectScan(
+            projectDir,
+            this.knownJsonlFiles,
+            this.projectScanTimer,
+            this.activeAgentId,
+            this.nextAgentId,
+            this.agents,
+            this.fileWatchers,
+            this.pollingTimers,
+            this.waitingTimers,
+            this.permissionTimers,
+            this.webview,
+            this.persistAgents,
+          );
+        }
 
         // Load furniture assets BEFORE sending layout
         (async () => {
