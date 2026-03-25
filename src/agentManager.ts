@@ -3,10 +3,11 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { CLI_ADAPTER_IDS } from './cliAdapter.js';
+import { getAdapter, getDefaultAdapter } from './adapterRegistry.js';
+import type { CliAdapterId } from './cliAdapter.js';
+import { CLI_ADAPTER_IDS, SESSION_STRATEGIES } from './cliAdapter.js';
 import {
   JSONL_POLL_INTERVAL_MS,
-  TERMINAL_NAME_PREFIX,
   WORKSPACE_KEY_AGENT_SEATS,
   WORKSPACE_KEY_AGENTS,
 } from './constants.js';
@@ -15,45 +16,16 @@ import { migrateAndLoadLayout } from './layoutPersistence.js';
 import { cancelPermissionTimer, cancelWaitingTimer } from './timerManager.js';
 import type { AgentState, PersistedAgent } from './types.js';
 
-export function getProjectDirPath(cwd?: string): string {
-  // Fall back to home directory when no workspace folder is open.
-  // This is the common case on Linux/macOS when VS Code is launched without a folder
-  // (e.g. `code` with no arguments). Claude Code writes JSONL files to
-  // ~/.claude/projects/<hash>/ where <hash> is derived from the process cwd, so we
-  // must use the same directory as the terminal's working directory.
-  const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
-  const dirName = workspacePath.replace(/[^a-zA-Z0-9-]/g, '-');
-  const projectDir = path.join(os.homedir(), '.claude', 'projects', dirName);
-  console.log(`[Pixel Agents] Project dir: ${workspacePath} → ${dirName}`);
-
-  // Verify the directory exists; if not, try fuzzy matching against existing dirs
-  if (!fs.existsSync(projectDir)) {
-    const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
-    try {
-      if (fs.existsSync(projectsRoot)) {
-        const candidates = fs.readdirSync(projectsRoot);
-        // Try case-insensitive match (handles Windows drive letter casing)
-        const lowerDirName = dirName.toLowerCase();
-        const match = candidates.find((c) => c.toLowerCase() === lowerDirName);
-        if (match && match !== dirName) {
-          const matchedDir = path.join(projectsRoot, match);
-          console.log(
-            `[Pixel Agents] Project dir not found, using case-insensitive match: ${dirName} → ${match}`,
-          );
-          return matchedDir;
-        }
-        if (!match) {
-          console.warn(
-            `[Pixel Agents] Project dir does not exist: ${projectDir}. ` +
-              `Available dirs (${candidates.length}): ${candidates.slice(0, 5).join(', ')}${candidates.length > 5 ? '...' : ''}`,
-          );
-        }
-      }
-    } catch {
-      // Ignore scan errors
-    }
-  }
-  return projectDir;
+/**
+ * Wrapper for Claude-specific project dir logic.
+ * Used by PixelAgentsViewProvider for project-scan (Claude /clear detection).
+ */
+export function getProjectDirPath(cwd?: string): string | null {
+  const adapter = getAdapter(CLI_ADAPTER_IDS.claude);
+  if (!adapter?.getProjectDir) return null;
+  const workspacePath = cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspacePath) return null;
+  return adapter.getProjectDir(workspacePath);
 }
 
 export async function launchNewTerminal(
@@ -72,7 +44,16 @@ export async function launchNewTerminal(
   persistAgents: () => void,
   folderPath?: string,
   bypassPermissions?: boolean,
+  cliAdapterId?: CliAdapterId,
 ): Promise<void> {
+  const adapter = cliAdapterId ? getAdapter(cliAdapterId) : getDefaultAdapter();
+  if (!adapter) {
+    console.log(
+      `[Pixel Agents] No CLI adapter available (requested: ${cliAdapterId ?? 'default'})`,
+    );
+    return;
+  }
+
   const folders = vscode.workspace.workspaceFolders;
   // Use home directory as fallback cwd when no workspace is open (common on Linux/macOS).
   // This ensures the terminal starts in a predictable location that matches the project
@@ -81,120 +62,191 @@ export async function launchNewTerminal(
   const isMultiRoot = !!(folders && folders.length > 1);
   const idx = nextTerminalIndexRef.current++;
   const terminal = vscode.window.createTerminal({
-    name: `${TERMINAL_NAME_PREFIX} #${idx}`,
+    name: `${adapter.terminalNamePrefix} #${idx}`,
     cwd,
   });
   terminal.show();
 
-  const sessionId = crypto.randomUUID();
-  const claudeCmd = bypassPermissions
-    ? `claude --session-id ${sessionId} --dangerously-skip-permissions`
-    : `claude --session-id ${sessionId}`;
-  terminal.sendText(claudeCmd);
-
-  const projectDir = getProjectDirPath(cwd);
-
-  // Pre-register expected JSONL file so project scan won't treat it as a /clear file
-  const expectedFile = path.join(projectDir, `${sessionId}.jsonl`);
-  knownJsonlFiles.add(expectedFile);
-
-  // Create agent immediately (before JSONL file exists)
   const id = nextAgentIdRef.current++;
   const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
-  const agent: AgentState = {
-    id,
-    cliAdapterId: CLI_ADAPTER_IDS.claude,
-    terminalRef: terminal,
-    projectDir,
-    jsonlFile: expectedFile,
-    fileOffset: 0,
-    lineBuffer: '',
-    activeToolIds: new Set(),
-    activeToolStatuses: new Map(),
-    activeToolNames: new Map(),
-    activeSubagentToolIds: new Map(),
-    activeSubagentToolNames: new Map(),
-    backgroundAgentToolIds: new Set(),
-    isWaiting: false,
-    permissionSent: false,
-    hadToolsInTurn: false,
-    lastDataAt: 0,
-    linesProcessed: 0,
-    seenUnknownRecordTypes: new Set(),
-    folderName,
-  };
 
-  agents.set(id, agent);
-  activeAgentIdRef.current = id;
-  persistAgents();
-  console.log(`[Pixel Agents] Agent ${id}: created for terminal ${terminal.name}`);
-  webview?.postMessage({ type: 'agentCreated', id, folderName });
+  if (adapter.sessionStrategy === SESSION_STRATEGIES.predictive) {
+    // ── Predictive strategy (Claude): session ID and JSONL path are known before launch ──
+    const sessionId = crypto.randomUUID();
+    const cmd = adapter.buildCommand({ bypassPermissions: !!bypassPermissions, sessionId });
+    terminal.sendText(cmd);
 
-  ensureProjectScan(
-    projectDir,
-    knownJsonlFiles,
-    projectScanTimerRef,
-    activeAgentIdRef,
-    nextAgentIdRef,
-    agents,
-    fileWatchers,
-    pollingTimers,
-    waitingTimers,
-    permissionTimers,
-    webview,
-    persistAgents,
-  );
-
-  // Poll for the specific JSONL file to appear
-  let pollCount = 0;
-  console.log(`[Pixel Agents] Agent ${id}: waiting for JSONL at ${agent.jsonlFile}`);
-  const pollTimer = setInterval(() => {
-    pollCount++;
-    try {
-      if (fs.existsSync(agent.jsonlFile)) {
-        console.log(
-          `[Pixel Agents] Agent ${id}: found JSONL file ${path.basename(agent.jsonlFile)} (after ${pollCount}s)`,
-        );
-        clearInterval(pollTimer);
-        jsonlPollTimers.delete(id);
-        startFileWatching(
-          id,
-          agent.jsonlFile,
-          agents,
-          fileWatchers,
-          pollingTimers,
-          waitingTimers,
-          permissionTimers,
-          webview,
-        );
-        readNewLines(id, agents, waitingTimers, permissionTimers, webview);
-      } else if (pollCount === 10) {
-        // After 10s of polling, warn with path details to help diagnose path encoding mismatches
-        const dirExists = fs.existsSync(projectDir);
-        let dirContents = '';
-        if (dirExists) {
-          try {
-            const files = fs.readdirSync(projectDir).filter((f) => f.endsWith('.jsonl'));
-            dirContents =
-              files.length > 0
-                ? `Dir has ${files.length} JSONL file(s): ${files.slice(0, 3).join(', ')}${files.length > 3 ? '...' : ''}`
-                : 'Dir exists but has no JSONL files';
-          } catch {
-            dirContents = 'Dir exists but unreadable';
-          }
-        } else {
-          dirContents = 'Dir does not exist';
-        }
-        console.warn(
-          `[Pixel Agents] Agent ${id}: JSONL file not found after 10s. ` +
-            `Expected: ${agent.jsonlFile}. ${dirContents}`,
-        );
-      }
-    } catch {
-      /* file may not exist yet */
+    const projectDir = adapter.getProjectDir!(cwd || '');
+    if (!projectDir) {
+      console.log(`[Pixel Agents] No project dir for ${adapter.displayName}, cannot track agent`);
+      return;
     }
-  }, JSONL_POLL_INTERVAL_MS);
-  jsonlPollTimers.set(id, pollTimer);
+
+    const expectedFile = adapter.getExpectedJsonlPath!(projectDir, sessionId);
+    knownJsonlFiles.add(expectedFile);
+
+    const agent: AgentState = {
+      id,
+      cliAdapterId: adapter.id,
+      terminalRef: terminal,
+      projectDir,
+      jsonlFile: expectedFile,
+      fileOffset: 0,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      lastDataAt: 0,
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      folderName,
+    };
+
+    agents.set(id, agent);
+    activeAgentIdRef.current = id;
+    persistAgents();
+    console.log(
+      `[Pixel Agents] Agent ${id}: created (${adapter.displayName}) for terminal ${terminal.name}`,
+    );
+    webview?.postMessage({ type: 'agentCreated', id, folderName });
+
+    ensureProjectScan(
+      projectDir,
+      knownJsonlFiles,
+      projectScanTimerRef,
+      activeAgentIdRef,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
+
+    // Poll for the specific JSONL file to appear
+    const pollTimer = setInterval(() => {
+      try {
+        if (fs.existsSync(agent.jsonlFile)) {
+          console.log(
+            `[Pixel Agents] Agent ${id}: found JSONL file ${path.basename(agent.jsonlFile)}`,
+          );
+          clearInterval(pollTimer);
+          jsonlPollTimers.delete(id);
+          startFileWatching(
+            id,
+            agent.jsonlFile,
+            agents,
+            fileWatchers,
+            pollingTimers,
+            waitingTimers,
+            permissionTimers,
+            webview,
+          );
+          readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+        }
+      } catch {
+        /* file may not exist yet */
+      }
+    }, JSONL_POLL_INTERVAL_MS);
+    jsonlPollTimers.set(id, pollTimer);
+  } else {
+    // ── Detective strategy (Copilot): discover the session after launch ──
+    const cmd = adapter.buildCommand({ bypassPermissions: !!bypassPermissions });
+    terminal.sendText(cmd);
+
+    const watchDir = adapter.getSessionWatchDir!();
+
+    // Build set of already-known session IDs from existing agents using this adapter
+    const knownSessions = new Set<string>();
+    for (const a of agents.values()) {
+      if (a.cliAdapterId === adapter.id && a.jsonlFile) {
+        const sessionDir = path.dirname(a.jsonlFile);
+        knownSessions.add(path.basename(sessionDir));
+      }
+    }
+    // Also snapshot current sessions before launch so we only detect truly new ones
+    if (adapter.findNewSession) {
+      // Pre-scan to mark all existing sessions as known
+      try {
+        const entries = fs.readdirSync(watchDir);
+        for (const entry of entries) {
+          knownSessions.add(entry);
+        }
+      } catch {
+        /* watch dir may not exist yet */
+      }
+    }
+
+    const agent: AgentState = {
+      id,
+      cliAdapterId: adapter.id,
+      terminalRef: terminal,
+      projectDir: watchDir,
+      jsonlFile: '',
+      fileOffset: 0,
+      lineBuffer: '',
+      activeToolIds: new Set(),
+      activeToolStatuses: new Map(),
+      activeToolNames: new Map(),
+      activeSubagentToolIds: new Map(),
+      activeSubagentToolNames: new Map(),
+      backgroundAgentToolIds: new Set(),
+      isWaiting: false,
+      permissionSent: false,
+      hadToolsInTurn: false,
+      lastDataAt: 0,
+      linesProcessed: 0,
+      seenUnknownRecordTypes: new Set(),
+      folderName,
+    };
+
+    agents.set(id, agent);
+    activeAgentIdRef.current = id;
+    persistAgents();
+    console.log(
+      `[Pixel Agents] Agent ${id}: created (${adapter.displayName}) for terminal ${terminal.name}`,
+    );
+    webview?.postMessage({ type: 'agentCreated', id, folderName });
+
+    // Poll for new session to appear
+    const pollTimer = setInterval(() => {
+      try {
+        const session = adapter.findNewSession!(knownSessions);
+        if (session) {
+          knownSessions.add(session.sessionId);
+          agent.jsonlFile = session.jsonlPath;
+          agent.projectDir = watchDir;
+          knownJsonlFiles.add(session.jsonlPath);
+          console.log(`[Pixel Agents] Agent ${id}: discovered session ${session.sessionId}`);
+          clearInterval(pollTimer);
+          jsonlPollTimers.delete(id);
+          persistAgents();
+          startFileWatching(
+            id,
+            session.jsonlPath,
+            agents,
+            fileWatchers,
+            pollingTimers,
+            waitingTimers,
+            permissionTimers,
+            webview,
+          );
+          readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+        }
+      } catch {
+        /* session dir may not exist yet */
+      }
+    }, JSONL_POLL_INTERVAL_MS);
+    jsonlPollTimers.set(id, pollTimer);
+  }
 }
 
 export function removeAgent(

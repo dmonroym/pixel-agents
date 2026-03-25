@@ -100,7 +100,7 @@ export function startPermissionTimer(
   agentId: number,
   agents: Map<number, AgentState>,
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
-  permissionExemptTools: Set<string>,
+  permissionExemptTools: ReadonlySet<string>,
   webview: vscode.Webview | undefined,
 ): void {
   cancelPermissionTimer(agentId, permissionTimers);

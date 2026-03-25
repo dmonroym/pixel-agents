@@ -100,6 +100,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           this.persistAgents,
           message.folderPath as string | undefined,
           message.bypassPermissions as boolean | undefined,
+          message.cliAdapterId as import('./cliAdapter.js').CliAdapterId | undefined,
         );
       } else if (message.type === 'focusAgent') {
         const agent = this.agents.get(message.id);
