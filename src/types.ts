@@ -16,6 +16,8 @@ export interface AgentState {
   activeSubagentToolIds: Map<string, Set<string>>; // parentToolId → active sub-tool IDs
   activeSubagentToolNames: Map<string, Map<string, string>>; // parentToolId → (subToolId → toolName)
   backgroundAgentToolIds: Set<string>; // tool IDs for run_in_background Agent calls (stay alive until queue-operation)
+  /** Number of subagents currently running (between subagent.started and system.notification) */
+  activeSubagentCount: number;
   isWaiting: boolean;
   permissionSent: boolean;
   hadToolsInTurn: boolean;

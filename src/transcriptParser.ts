@@ -97,6 +97,9 @@ function executeTurnEnd(
   const agent = agents.get(agentId);
   if (!agent) return;
 
+  // If subagents became active during the delay, suppress
+  if (agent.activeSubagentCount > 0) return;
+
   cancelWaitingTimer(agentId, waitingTimers);
   cancelPermissionTimer(agentId, permissionTimers);
 
@@ -153,6 +156,12 @@ export function processTranscriptLine(
       case 'toolStart': {
         cancelWaitingTimer(agentId, waitingTimers);
         cancelTurnEndTimer(agentId);
+        // Clear permission state when new data flows from the main agent
+        cancelPermissionTimer(agentId, permissionTimers);
+        if (agent.permissionSent) {
+          agent.permissionSent = false;
+          webview?.postMessage({ type: 'agentToolPermissionClear', id: agentId });
+        }
         agent.isWaiting = false;
         agent.hadToolsInTurn = true;
         webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'active' });
@@ -203,6 +212,15 @@ export function processTranscriptLine(
       }
 
       case 'turnEnd': {
+        // While subagents are running (Copilot mixes all events in one file),
+        // suppress turnEnd — these are subagent turn boundaries, not the main agent's.
+        if (agent.activeSubagentCount > 0) {
+          console.log(
+            `[Pixel Agents] Agent ${agentId} turnEnd suppressed (${agent.activeSubagentCount} subagent(s) active)`,
+          );
+          break;
+        }
+
         // When tools are still tracked (Copilot batches all events in one write),
         // delay the turn-end so the active state renders visibly before going idle.
         if (agent.activeToolIds.size > 0) {
@@ -229,10 +247,17 @@ export function processTranscriptLine(
         cancelTurnEndTimer(agentId);
         clearAgentActivity(agent, agentId, permissionTimers, webview);
         agent.hadToolsInTurn = false;
+        agent.activeSubagentCount = 0;
         break;
       }
 
       case 'toolExecuting': {
+        // Tool execution progress — restart permission timer (tool is alive)
+        // Also clear any existing permission bubble since we got fresh data
+        if (agent.permissionSent) {
+          agent.permissionSent = false;
+          webview?.postMessage({ type: 'agentToolPermissionClear', id: agentId });
+        }
         if (agent.activeToolIds.has(event.parentToolId)) {
           startPermissionTimer(agentId, agents, permissionTimers, exemptTools, webview);
         }
@@ -311,6 +336,10 @@ export function processTranscriptLine(
       }
 
       case 'subagentStarted': {
+        agent.activeSubagentCount++;
+        console.log(
+          `[Pixel Agents] Agent ${agentId} subagent started (${agent.activeSubagentCount} active)`,
+        );
         const status = `Subtask: ${event.agentName}`;
         webview?.postMessage({
           type: 'subagentToolStart',
@@ -323,6 +352,10 @@ export function processTranscriptLine(
       }
 
       case 'subagentCompleted': {
+        agent.activeSubagentCount = Math.max(0, agent.activeSubagentCount - 1);
+        console.log(
+          `[Pixel Agents] Agent ${agentId} subagent completed (${agent.activeSubagentCount} remaining)`,
+        );
         webview?.postMessage({
           type: 'subagentClear',
           id: agentId,

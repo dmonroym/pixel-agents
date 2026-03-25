@@ -62,13 +62,10 @@ export function readNewLines(
 
     const hasLines = lines.some((l) => l.trim());
     if (hasLines) {
-      // New data arriving — cancel timers (data flowing means agent is still active)
+      // New data arriving — cancel waiting timer (data flowing means not idle).
+      // Permission timer is managed by processTranscriptLine to avoid false
+      // clears from subagent chatter in Copilot's shared events.jsonl.
       cancelWaitingTimer(agentId, waitingTimers);
-      cancelPermissionTimer(agentId, permissionTimers);
-      if (agent.permissionSent) {
-        agent.permissionSent = false;
-        webview?.postMessage({ type: 'agentToolPermissionClear', id: agentId });
-      }
     }
 
     for (const line of lines) {
@@ -253,6 +250,7 @@ function adoptTerminalForFile(
     activeSubagentToolIds: new Map(),
     activeSubagentToolNames: new Map(),
     backgroundAgentToolIds: new Set(),
+    activeSubagentCount: 0,
     isWaiting: false,
     permissionSent: false,
     hadToolsInTurn: false,
