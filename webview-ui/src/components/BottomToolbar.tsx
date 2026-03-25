@@ -4,6 +4,11 @@ import type { WorkspaceFolder } from '../hooks/useExtensionMessages.js';
 import { vscode } from '../vscodeApi.js';
 import { SettingsModal } from './SettingsModal.js';
 
+interface AdapterInfo {
+  id: string;
+  displayName: string;
+}
+
 interface BottomToolbarProps {
   isEditMode: boolean;
   onOpenClaude: () => void;
@@ -14,7 +19,13 @@ interface BottomToolbarProps {
   onToggleAlwaysShowOverlay: () => void;
   workspaceFolders: WorkspaceFolder[];
   externalAssetDirectories: string[];
+  availableAdapters: AdapterInfo[];
 }
+
+const ADAPTER_EMOJI: Record<string, string> = {
+  copilot: '🤖',
+  claude: '🔵',
+};
 
 const panelStyle: React.CSSProperties = {
   position: 'absolute',
@@ -57,6 +68,7 @@ export function BottomToolbar({
   onToggleAlwaysShowOverlay,
   workspaceFolders,
   externalAssetDirectories,
+  availableAdapters,
 }: BottomToolbarProps) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -66,6 +78,7 @@ export function BottomToolbar({
   const [hoveredBypass, setHoveredBypass] = useState<number | null>(null);
   const folderPickerRef = useRef<HTMLDivElement>(null);
   const pendingBypassRef = useRef(false);
+  const pendingAdapterRef = useRef<string | undefined>(undefined);
 
   // Close folder picker / bypass menu on outside click
   useEffect(() => {
@@ -85,6 +98,7 @@ export function BottomToolbar({
   const handleAgentClick = () => {
     setIsBypassMenuOpen(false);
     pendingBypassRef.current = false;
+    pendingAdapterRef.current = undefined;
     if (hasMultipleFolders) {
       setIsFolderPickerOpen((v) => !v);
     } else {
@@ -101,8 +115,26 @@ export function BottomToolbar({
   const handleFolderSelect = (folder: WorkspaceFolder) => {
     setIsFolderPickerOpen(false);
     const bypassPermissions = pendingBypassRef.current;
+    const cliAdapterId = pendingAdapterRef.current;
     pendingBypassRef.current = false;
-    vscode.postMessage({ type: 'openClaude', folderPath: folder.path, bypassPermissions });
+    pendingAdapterRef.current = undefined;
+    vscode.postMessage({
+      type: 'openClaude',
+      folderPath: folder.path,
+      bypassPermissions,
+      cliAdapterId,
+    });
+  };
+
+  const handleAdapterSelect = (adapterId: string, bypassPermissions: boolean) => {
+    setIsBypassMenuOpen(false);
+    if (hasMultipleFolders) {
+      pendingBypassRef.current = bypassPermissions;
+      pendingAdapterRef.current = adapterId;
+      setIsFolderPickerOpen(true);
+    } else {
+      vscode.postMessage({ type: 'openClaude', bypassPermissions, cliAdapterId: adapterId });
+    }
   };
 
   const handleBypassSelect = (bypassPermissions: boolean) => {
@@ -114,6 +146,8 @@ export function BottomToolbar({
       vscode.postMessage({ type: 'openClaude', bypassPermissions });
     }
   };
+
+  const hasMultipleAdapters = availableAdapters.length > 1;
 
   return (
     <div style={panelStyle}>
@@ -152,46 +186,112 @@ export function BottomToolbar({
               zIndex: 'var(--pixel-controls-z)',
             }}
           >
-            <button
-              onClick={() => handleBypassSelect(false)}
-              onMouseEnter={() => setHoveredBypass(0)}
-              onMouseLeave={() => setHoveredBypass(null)}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '6px 10px',
-                fontSize: '24px',
-                color: 'var(--pixel-text)',
-                background: hoveredBypass === 0 ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                border: 'none',
-                borderRadius: 0,
-                cursor: 'pointer',
-              }}
-            >
-              Normal
-            </button>
-            <div style={{ height: 1, margin: '4px 0', background: 'var(--pixel-border)' }} />
-            <button
-              onClick={() => handleBypassSelect(true)}
-              onMouseEnter={() => setHoveredBypass(1)}
-              onMouseLeave={() => setHoveredBypass(null)}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '6px 10px',
-                fontSize: '24px',
-                color: 'var(--pixel-warning-text)',
-                background: hoveredBypass === 1 ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
-                border: 'none',
-                borderRadius: 0,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              <span style={{ fontSize: '16px' }}>⚡</span> Bypass Permissions
-            </button>
+            {hasMultipleAdapters ? (
+              availableAdapters.map((adapter, adapterIdx) => {
+                const emoji = ADAPTER_EMOJI[adapter.id] ?? '🔹';
+                const baseIndex = adapterIdx * 2;
+                return (
+                  <div key={adapter.id}>
+                    {adapterIdx > 0 && (
+                      <div
+                        style={{
+                          height: 1,
+                          margin: '4px 0',
+                          background: 'var(--pixel-border)',
+                        }}
+                      />
+                    )}
+                    <button
+                      onClick={() => handleAdapterSelect(adapter.id, false)}
+                      onMouseEnter={() => setHoveredBypass(baseIndex)}
+                      onMouseLeave={() => setHoveredBypass(null)}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '6px 10px',
+                        fontSize: '24px',
+                        color: 'var(--pixel-text)',
+                        background:
+                          hoveredBypass === baseIndex ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                        border: 'none',
+                        borderRadius: 0,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {emoji} {adapter.displayName}
+                    </button>
+                    <button
+                      onClick={() => handleAdapterSelect(adapter.id, true)}
+                      onMouseEnter={() => setHoveredBypass(baseIndex + 1)}
+                      onMouseLeave={() => setHoveredBypass(null)}
+                      style={{
+                        display: 'block',
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '6px 10px',
+                        fontSize: '24px',
+                        color: 'var(--pixel-warning-text)',
+                        background:
+                          hoveredBypass === baseIndex + 1
+                            ? 'rgba(255, 255, 255, 0.08)'
+                            : 'transparent',
+                        border: 'none',
+                        borderRadius: 0,
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {emoji} {adapter.displayName} <span style={{ fontSize: '16px' }}>⚡</span>
+                    </button>
+                  </div>
+                );
+              })
+            ) : (
+              <>
+                <button
+                  onClick={() => handleBypassSelect(false)}
+                  onMouseEnter={() => setHoveredBypass(0)}
+                  onMouseLeave={() => setHoveredBypass(null)}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 10px',
+                    fontSize: '24px',
+                    color: 'var(--pixel-text)',
+                    background: hoveredBypass === 0 ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    border: 'none',
+                    borderRadius: 0,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Normal
+                </button>
+                <div style={{ height: 1, margin: '4px 0', background: 'var(--pixel-border)' }} />
+                <button
+                  onClick={() => handleBypassSelect(true)}
+                  onMouseEnter={() => setHoveredBypass(1)}
+                  onMouseLeave={() => setHoveredBypass(null)}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '6px 10px',
+                    fontSize: '24px',
+                    color: 'var(--pixel-warning-text)',
+                    background: hoveredBypass === 1 ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    border: 'none',
+                    borderRadius: 0,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <span style={{ fontSize: '16px' }}>⚡</span> Bypass Permissions
+                </button>
+              </>
+            )}
           </div>
         )}
         {isFolderPickerOpen && (

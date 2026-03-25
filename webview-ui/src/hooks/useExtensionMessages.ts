@@ -58,6 +58,7 @@ export interface ExtensionMessageState {
   loadedAssets?: { catalog: FurnitureAsset[]; sprites: Record<string, string[][]> };
   workspaceFolders: WorkspaceFolder[];
   externalAssetDirectories: string[];
+  availableAdapters: Array<{ id: string; displayName: string }>;
 }
 
 function saveAgentSeats(os: OfficeState): void {
@@ -89,6 +90,9 @@ export function useExtensionMessages(
   >();
   const [workspaceFolders, setWorkspaceFolders] = useState<WorkspaceFolder[]>([]);
   const [externalAssetDirectories, setExternalAssetDirectories] = useState<string[]>([]);
+  const [availableAdapters, setAvailableAdapters] = useState<
+    Array<{ id: string; displayName: string }>
+  >([]);
 
   // Track whether initial layout has been loaded (ref to avoid re-render)
   const layoutReadyRef = useRef(false);
@@ -380,6 +384,9 @@ export function useExtensionMessages(
         const sets = msg.sets as string[][][][];
         console.log(`[Webview] Received ${sets.length} wall tile set(s)`);
         setWallSprites(sets);
+      } else if (msg.type === 'availableAdapters') {
+        const adapters = msg.adapters as Array<{ id: string; displayName: string }>;
+        setAvailableAdapters(adapters);
       } else if (msg.type === 'workspaceFolders') {
         const folders = msg.folders as WorkspaceFolder[];
         setWorkspaceFolders(folders);
@@ -423,5 +430,6 @@ export function useExtensionMessages(
     loadedAssets,
     workspaceFolders,
     externalAssetDirectories,
+    availableAdapters,
   };
 }

@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { getAdapter, getAvailableAdapterIds } from './adapterRegistry.js';
 import {
   getProjectDirPath,
   launchNewTerminal,
@@ -145,6 +146,17 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
           type: 'settingsLoaded',
           soundEnabled,
           externalAssetDirectories: config.externalAssetDirectories,
+        });
+
+        // Send available CLI adapters to webview
+        this.webview?.postMessage({
+          type: 'availableAdapters',
+          adapters: getAvailableAdapterIds()
+            .map((id) => {
+              const adapter = getAdapter(id);
+              return adapter ? { id: adapter.id, displayName: adapter.displayName } : null;
+            })
+            .filter(Boolean),
         });
 
         // Send workspace folders to webview (only when multi-root)
