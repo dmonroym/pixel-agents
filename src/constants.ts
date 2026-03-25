@@ -28,4 +28,5 @@ export const COMMAND_EXPORT_DEFAULT_LAYOUT = 'pixel-agents.exportDefaultLayout';
 export const WORKSPACE_KEY_AGENTS = 'pixel-agents.agents';
 export const WORKSPACE_KEY_AGENT_SEATS = 'pixel-agents.agentSeats';
 export const WORKSPACE_KEY_LAYOUT = 'pixel-agents.layout';
+/** @deprecated Use adapter.terminalNamePrefix instead */
 export const TERMINAL_NAME_PREFIX = 'Claude Code';

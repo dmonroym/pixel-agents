@@ -10,6 +10,9 @@ This project is licensed under the [MIT License](LICENSE), so your contributions
 
 - [Node.js](https://nodejs.org/) (v22 recommended)
 - [VS Code](https://code.visualstudio.com/) (v1.105.0 or later)
+- To test the extension end-to-end, install at least one supported CLI:
+  [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or
+  [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli)
 
 ### Setup
 

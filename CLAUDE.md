@@ -72,7 +72,28 @@ scripts/                      — 7-stage asset extraction pipeline
 
 ## Core Concepts
 
-**Vocabulary**: Terminal = VS Code terminal running Claude. Session = JSONL conversation file. Agent = webview character bound 1:1 to a terminal.
+**Vocabulary**: Terminal = VS Code terminal running an AI CLI (Claude Code or Copilot CLI). Session = transcript file (JSONL or event stream). Agent = webview character bound 1:1 to a terminal.
+
+## CLI Adapter Architecture
+
+The extension supports multiple AI CLI tools through a provider pattern:
+
+**Key files:**
+- `src/cliAdapter.ts` — `CliAdapter` interface and `ParsedEvent` union type
+- `src/providers/claudeProvider.ts` — Claude Code adapter (predictive session strategy)
+- `src/providers/copilotProvider.ts` — Copilot CLI adapter (detective session strategy)
+- `src/adapterRegistry.ts` — Auto-detection, caching, default selection
+
+**Session strategies:**
+- **Predictive** (Claude): Extension generates a session ID, knows the JSONL path ahead of time (`~/.claude/projects/<hash>/<uuid>.jsonl`)
+- **Detective** (Copilot): Extension watches `~/.copilot/session-state/` for new session directories containing `events.jsonl`
+
+**Adding a new CLI:**
+1. Create `src/providers/<name>Provider.ts` implementing `CliAdapter`
+2. Register it in `src/adapterRegistry.ts` (add to `allAdapters` map and `preferenceOrder`)
+3. Add tool name mappings to `formatToolStatus()` in `transcriptParser.ts`
+
+## Core Concepts (Legacy — Claude-specific)
 
 **Extension ↔ Webview**: `postMessage` protocol. Key messages: `openClaude`, `agentCreated/Closed`, `focusAgent`, `agentToolStart/Done/Clear`, `agentStatus`, `existingAgents`, `layoutLoaded`, `furnitureAssetsLoaded`, `floorTilesLoaded`, `wallTilesLoaded`, `saveLayout`, `saveAgentSeats`, `exportLayout`, `importLayout`, `settingsLoaded` (includes `externalAssetDirectories`), `setSoundEnabled`, `addExternalAssetDirectory`, `removeExternalAssetDirectory` (field: `path`), `externalAssetDirectoriesUpdated` (field: `dirs`).
 

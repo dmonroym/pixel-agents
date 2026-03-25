@@ -26,7 +26,7 @@
 
 Pixel Agents turns multi-agent AI systems into something you can actually see and manage. Each agent becomes a character in a pixel art office. They walk around, sit at their desk, and visually reflect what they are doing — typing when writing code, reading when searching files, waiting when it needs your attention.
 
-Right now it works as a VS Code extension with Claude Code. The vision though, is a fully agent-agnostic, platform-agnostic interface for orchestrating any AI agents, deployable anywhere.
+Works as a VS Code extension with Claude Code and GitHub Copilot CLI. The vision though, is a fully agent-agnostic, platform-agnostic interface for orchestrating any AI agents, deployable anywhere.
 
 This is the source code for the free Pixel Agents extension for VS Code — install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=pablodelucca.pixel-agents) or [Open VSX](https://open-vsx.org/extension/pablodelucca/pixel-agents) with the full furniture catalog included.
 
@@ -34,7 +34,7 @@ This is the source code for the free Pixel Agents extension for VS Code — inst
 
 ## Features
 
-- **One agent, one character** — every Claude Code terminal gets its own animated character
+- **One agent, one character** — every AI agent terminal (Claude Code, Copilot CLI) gets its own animated character
 - **Live activity tracking** — characters animate based on what the agent is actually doing (writing, reading, running commands)
 - **Office layout editor** — design your office with floors, walls, and furniture using a built-in editor
 - **Speech bubbles** — visual indicators when an agent is waiting for input or needs permission
@@ -51,8 +51,17 @@ This is the source code for the free Pixel Agents extension for VS Code — inst
 ## Requirements
 
 - VS Code 1.105.0 or later
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) **or** [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli) installed and configured
 - **Platform**: Windows, Linux, and macOS are supported
+
+### Supported CLIs
+
+| CLI | Status | Requirements |
+|-----|--------|-------------|
+| [GitHub Copilot CLI](https://docs.github.com/copilot/concepts/agents/about-copilot-cli) | ✅ Supported | Active Copilot subscription |
+| [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ Supported | Anthropic API key |
+
+The extension auto-detects which CLIs are installed. If both are available, Copilot CLI is used by default. Right-click the **+ Agent** button to choose a specific CLI.
 
 ## Getting Started
 
@@ -73,7 +82,7 @@ Then press **F5** in VS Code to launch the Extension Development Host.
 ### Usage
 
 1. Open the **Pixel Agents** panel (it appears in the bottom panel area alongside your terminal)
-2. Click **+ Agent** to spawn a new Claude Code terminal and its character. Right-click for the option to launch with `--dangerously-skip-permissions` (bypasses all tool approval prompts)
+2. Click **+ Agent** to spawn a new AI agent terminal. Right-click for options to choose between Claude Code and Copilot CLI
 3. Start coding with Claude — watch the character react in real time
 4. Click a character to select it, then click a seat to reassign it
 5. Click **Layout** to open the office editor and customize your space
@@ -104,7 +113,7 @@ Characters are based on the amazing work of [JIK-A-4, Metro City](https://jik-a-
 
 ## How It Works
 
-Pixel Agents watches Claude Code's JSONL transcript files to track what each agent is doing. When an agent uses a tool (like writing a file or running a command), the extension detects it and updates the character's animation accordingly. No modifications to Claude Code are needed — it's purely observational.
+Pixel Agents watches AI agent transcript files (Claude Code JSONL or Copilot CLI event streams) to track what each agent is doing. When an agent uses a tool (like writing a file or running a command), the extension detects it and updates the character's animation accordingly. No modifications to the CLI are needed — it's purely observational.
 
 The webview runs a lightweight game loop with canvas rendering, BFS pathfinding, and a character state machine (idle → walk → type/read). Everything is pixel-perfect at integer zoom levels.
 
@@ -140,7 +149,7 @@ The long-term vision is an interface where managing AI agents feels like playing
 For this to work, the architecture needs to be modular at every level:
 
 - **Platform-agnostic**: VS Code extension today, Electron app, web app, or any other host environment tomorrow.
-- **Agent-agnostic**: Claude Code today, but built to support Codex, OpenCode, Gemini, Cursor, Copilot, and others through composable adapters.
+- **Agent-agnostic**: Claude Code and Copilot CLI today, with an adapter architecture built to support Codex, OpenCode, Gemini, Cursor, and others through composable adapters.
 - **Theme-agnostic**: community-created assets, skins, and themes from any contributor.
 
 We're actively working on the core module and adapter architecture that makes this possible. If you're interested to talk about this further, please visit our [Discussions Section](https://github.com/pablodelucca/pixel-agents/discussions).
