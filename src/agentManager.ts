@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { CLI_ADAPTER_IDS } from './cliAdapter.js';
 import {
   JSONL_POLL_INTERVAL_MS,
   TERMINAL_NAME_PREFIX,
@@ -102,6 +103,7 @@ export async function launchNewTerminal(
   const folderName = isMultiRoot && cwd ? path.basename(cwd) : undefined;
   const agent: AgentState = {
     id,
+    cliAdapterId: CLI_ADAPTER_IDS.claude,
     terminalRef: terminal,
     projectDir,
     jsonlFile: expectedFile,
@@ -241,6 +243,7 @@ export function persistAgents(
   for (const agent of agents.values()) {
     persisted.push({
       id: agent.id,
+      cliAdapterId: agent.cliAdapterId,
       terminalName: agent.terminalRef.name,
       jsonlFile: agent.jsonlFile,
       projectDir: agent.projectDir,
@@ -280,6 +283,7 @@ export function restoreAgents(
 
     const agent: AgentState = {
       id: p.id,
+      cliAdapterId: p.cliAdapterId ?? CLI_ADAPTER_IDS.claude,
       terminalRef: terminal,
       projectDir: p.projectDir,
       jsonlFile: p.jsonlFile,

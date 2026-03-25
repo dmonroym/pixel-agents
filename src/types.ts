@@ -1,7 +1,10 @@
 import type * as vscode from 'vscode';
 
+import type { CliAdapterId } from './cliAdapter.js';
+
 export interface AgentState {
   id: number;
+  cliAdapterId: CliAdapterId;
   terminalRef: vscode.Terminal;
   projectDir: string;
   jsonlFile: string;
@@ -28,6 +31,7 @@ export interface AgentState {
 
 export interface PersistedAgent {
   id: number;
+  cliAdapterId: CliAdapterId;
   terminalName: string;
   jsonlFile: string;
   projectDir: string;

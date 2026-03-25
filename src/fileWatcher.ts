@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
+import { CLI_ADAPTER_IDS } from './cliAdapter.js';
 import { FILE_WATCHER_POLL_INTERVAL_MS, PROJECT_SCAN_INTERVAL_MS } from './constants.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
@@ -240,6 +241,7 @@ function adoptTerminalForFile(
   const id = nextAgentIdRef.current++;
   const agent: AgentState = {
     id,
+    cliAdapterId: CLI_ADAPTER_IDS.claude,
     terminalRef: terminal,
     projectDir,
     jsonlFile,
