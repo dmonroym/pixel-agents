@@ -200,6 +200,9 @@ export async function launchNewTerminal(
         for (const entry of entries) {
           knownSessions.add(entry);
         }
+        console.log(
+          `[Pixel Agents] Agent ${id}: pre-scanned ${knownSessions.size} known sessions in ${watchDir}`,
+        );
       } catch {
         /* watch dir may not exist yet */
       }
@@ -238,15 +241,39 @@ export async function launchNewTerminal(
     webview?.postMessage({ type: 'agentCreated', id, folderName });
 
     // Poll for new session to appear
+    let pollCount = 0;
     const pollTimer = setInterval(() => {
+      pollCount++;
       try {
         const session = adapter.findNewSession!(knownSessions);
+        if (pollCount <= 3 || (pollCount % 10 === 0 && pollCount <= 30)) {
+          console.log(
+            `[Pixel Agents] Agent ${id}: poll #${pollCount} → ${session ? `found ${session.sessionId.slice(0, 8)}...` : 'null'}`,
+          );
+        }
         if (session) {
           // Check if another agent already claimed this session
           if (knownJsonlFiles.has(session.jsonlPath)) {
+            console.log(
+              `[Pixel Agents] Agent ${id}: session ${session.sessionId.slice(0, 8)} already claimed, skipping`,
+            );
             knownSessions.add(session.sessionId);
             return; // Skip, keep polling for a different session
           }
+
+          // FIFO: only claim if no older agent (lower ID) is also waiting for a session.
+          // This prevents Agent 2 from stealing Agent 1's session.
+          let olderAgentWaiting = false;
+          for (const [otherId, otherAgent] of agents) {
+            if (otherId < id && otherAgent.cliAdapterId === adapter.id && !otherAgent.jsonlFile) {
+              olderAgentWaiting = true;
+              break;
+            }
+          }
+          if (olderAgentWaiting) {
+            return; // Let the older agent claim it on their next poll
+          }
+
           knownSessions.add(session.sessionId);
           agent.jsonlFile = session.jsonlPath;
           agent.projectDir = watchDir;

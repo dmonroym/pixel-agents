@@ -107,6 +107,9 @@ function executeTurnEnd(
   agent.isWaiting = true;
   agent.permissionSent = false;
   agent.hadToolsInTurn = false;
+  console.log(
+    `[Pixel Agents] Agent ${agentId}: turn ended → sending 'waiting' bubble (webview=${webview ? 'yes' : 'NO'})`,
+  );
   webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
 }
 

@@ -670,8 +670,13 @@ export class OfficeState {
   showWaitingBubble(id: number): void {
     const ch = this.characters.get(id);
     if (ch) {
+      console.log(
+        `[OfficeState] showWaitingBubble(${id}): setting bubbleType='waiting', timer=${WAITING_BUBBLE_DURATION_SEC}s`,
+      );
       ch.bubbleType = 'waiting';
       ch.bubbleTimer = WAITING_BUBBLE_DURATION_SEC;
+    } else {
+      console.log(`[OfficeState] showWaitingBubble(${id}): character NOT found in map`);
     }
   }
 

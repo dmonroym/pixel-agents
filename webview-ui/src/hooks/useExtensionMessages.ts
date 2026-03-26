@@ -258,6 +258,7 @@ export function useExtensionMessages(
       } else if (msg.type === 'agentStatus') {
         const id = msg.id as number;
         const status = msg.status as string;
+        console.log(`[Webview] agentStatus: id=${id}, status=${status}`);
         setAgentStatuses((prev) => {
           if (status === 'active') {
             if (!(id in prev)) return prev;
@@ -269,6 +270,8 @@ export function useExtensionMessages(
         });
         os.setAgentActive(id, status === 'active');
         if (status === 'waiting') {
+          const hasChar = os.characters.has(id);
+          console.log(`[Webview] showWaitingBubble(${id}): character exists=${hasChar}`);
           os.showWaitingBubble(id);
           playDoneSound();
         }
