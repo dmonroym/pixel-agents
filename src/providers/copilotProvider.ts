@@ -169,16 +169,22 @@ export const copilotAdapter: CliAdapter = {
         ];
       }
 
+      case 'subagent.completed': {
+        // Copilot emits this with data.toolCallId matching the original tool call.
+        // system.notification follows with a human-readable agentId, but we use
+        // toolCallId here since it matches what subagent.started provided.
+        return [
+          {
+            kind: PARSED_EVENT_KINDS.subagentCompleted,
+            parentToolId: event.data.toolCallId ?? event.id,
+          },
+        ];
+      }
+
       case 'system.notification': {
-        const kindType = event.data.kind?.type;
-        if (kindType === 'agent_idle' || kindType === 'agent_completed') {
-          return [
-            {
-              kind: PARSED_EVENT_KINDS.subagentCompleted,
-              parentToolId: event.data.kind?.agentId ?? event.id,
-            },
-          ];
-        }
+        // system.notification with kind.type 'agent_completed'/'agent_idle' follows
+        // subagent.completed. Since we now handle subagent.completed directly,
+        // ignore these to avoid double-decrementing activeSubagentCount.
         return [{ kind: PARSED_EVENT_KINDS.ignored }];
       }
 

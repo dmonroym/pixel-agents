@@ -179,9 +179,6 @@ export async function launchNewTerminal(
     jsonlPollTimers.set(id, pollTimer);
   } else {
     // ── Detective strategy (Copilot): discover the session after launch ──
-    const cmd = adapter.buildCommand({ bypassPermissions: !!bypassPermissions });
-    terminal.sendText(cmd);
-
     const watchDir = adapter.getSessionWatchDir!();
 
     // Build set of already-known session IDs from existing agents using this adapter
@@ -192,9 +189,10 @@ export async function launchNewTerminal(
         knownSessions.add(path.basename(sessionDir));
       }
     }
-    // Also snapshot current sessions before launch so we only detect truly new ones
+    // Pre-scan BEFORE sending the command — if Copilot creates the session
+    // directory quickly, a post-send scan would mark the new session as "known"
+    // and the poll would never discover it.
     if (adapter.findNewSession) {
-      // Pre-scan to mark all existing sessions as known
       try {
         const entries = fs.readdirSync(watchDir);
         for (const entry of entries) {
@@ -207,6 +205,10 @@ export async function launchNewTerminal(
         /* watch dir may not exist yet */
       }
     }
+
+    // Now launch the CLI — any new session directory it creates will be "unknown"
+    const cmd = adapter.buildCommand({ bypassPermissions: !!bypassPermissions });
+    terminal.sendText(cmd);
 
     const agent: AgentState = {
       id,
