@@ -165,8 +165,10 @@ function orientationToFacing(orientation: string): Direction {
 export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
   const seats = new Map<string, Seat>();
 
-  // Build set of all workstation tiles (desks + electronics like PCs/monitors)
+  // Build set of all desk/surface tiles (for facing direction detection)
   const deskTiles = new Set<string>();
+  // Build set of electronics tiles only (PCs, monitors — the real workstation signal)
+  const electronicsTiles = new Set<string>();
   for (const item of furniture) {
     const entry = getCatalogEntry(item.type);
     if (!entry) continue;
@@ -174,6 +176,9 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
     for (let dr = 0; dr < entry.footprintH; dr++) {
       for (let dc = 0; dc < entry.footprintW; dc++) {
         deskTiles.add(`${item.col + dc},${item.row + dr}`);
+        if (entry.category === 'electronics') {
+          electronicsTiles.add(`${item.col + dc},${item.row + dr}`);
+        }
       }
     }
   }
@@ -202,13 +207,14 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
         // 1) Chair orientation takes priority
         // 2) Adjacent desk direction
         // 3) Default forward (DOWN)
+        // hasDeskAdjacent uses electronics tiles only (PCs/monitors = real workstation)
+        // so coffee tables, small tables etc. don't make a seat "work-preferred"
         let facingDir: Direction = Direction.DOWN;
         let hasDeskAdjacent = false;
         if (entry.orientation) {
           facingDir = orientationToFacing(entry.orientation);
-          // Check if any adjacent tile is a desk
           for (const d of dirs) {
-            if (deskTiles.has(`${tileCol + d.dc},${tileRow + d.dr}`)) {
+            if (electronicsTiles.has(`${tileCol + d.dc},${tileRow + d.dr}`)) {
               hasDeskAdjacent = true;
               break;
             }
@@ -217,6 +223,12 @@ export function layoutToSeats(furniture: PlacedFurniture[]): Map<string, Seat> {
           for (const d of dirs) {
             if (deskTiles.has(`${tileCol + d.dc},${tileRow + d.dr}`)) {
               facingDir = d.facing;
+              break;
+            }
+          }
+          // Check electronics adjacency separately for hasDeskAdjacent
+          for (const d of dirs) {
+            if (electronicsTiles.has(`${tileCol + d.dc},${tileRow + d.dr}`)) {
               hasDeskAdjacent = true;
               break;
             }

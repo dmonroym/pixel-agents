@@ -157,6 +157,10 @@ export class OfficeState {
     return this.layout;
   }
 
+  getSeats(): Map<string, Seat> {
+    return this.seats;
+  }
+
   /** Get the blocked-tile key for a character's own seat, or null */
   private ownSeatKey(ch: Character): string | null {
     if (!ch.seatId) return null;
