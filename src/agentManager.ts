@@ -35,6 +35,18 @@ export function getProjectDirPath(cwd?: string): string | null {
   return path.join(os.homedir(), '.claude', 'projects', dirName);
 }
 
+/**
+ * Get the Copilot session-state watch directory.
+ * Returns the path even if the directory doesn't exist yet.
+ */
+export function getCopilotSessionDir(): string {
+  const adapter = getAdapter(CLI_ADAPTER_IDS.copilot);
+  if (adapter?.getSessionWatchDir) {
+    return adapter.getSessionWatchDir();
+  }
+  return path.join(os.homedir(), '.copilot', 'session-state');
+}
+
 export async function launchNewTerminal(
   nextAgentIdRef: { current: number },
   nextTerminalIndexRef: { current: number },

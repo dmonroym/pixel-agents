@@ -2,11 +2,20 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { CLI_ADAPTER_IDS } from './cliAdapter.js';
+import { CLI_ADAPTER_IDS, type CliAdapterId } from './cliAdapter.js';
 import { FILE_WATCHER_POLL_INTERVAL_MS, PROJECT_SCAN_INTERVAL_MS } from './constants.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
 import type { AgentState } from './types.js';
+
+/** Detect the CLI adapter from a JSONL file path. */
+function detectAdapterFromPath(jsonlPath: string): CliAdapterId {
+  const normalized = jsonlPath.replace(/\\/g, '/');
+  if (normalized.includes('/.copilot/') || normalized.includes('.copilot/session-state/')) {
+    return CLI_ADAPTER_IDS.copilot;
+  }
+  return CLI_ADAPTER_IDS.claude;
+}
 
 export function startFileWatching(
   agentId: number,
@@ -238,7 +247,7 @@ function adoptTerminalForFile(
   const id = nextAgentIdRef.current++;
   const agent: AgentState = {
     id,
-    cliAdapterId: CLI_ADAPTER_IDS.claude,
+    cliAdapterId: detectAdapterFromPath(jsonlFile),
     terminalRef: terminal,
     projectDir,
     jsonlFile,
@@ -279,6 +288,123 @@ function adoptTerminalForFile(
     webview,
   );
   readNewLines(id, agents, waitingTimers, permissionTimers, webview);
+}
+
+/**
+ * Scan Copilot's session-state directory for sessions that already exist
+ * but aren't tracked by any agent. This enables adopting terminals that
+ * were started outside of Pixel Agents (e.g., manually running `copilot`).
+ */
+export function ensureCopilotScan(
+  copilotSessionDir: string,
+  knownJsonlFiles: Set<string>,
+  copilotScanTimerRef: { current: ReturnType<typeof setInterval> | null },
+  activeAgentIdRef: { current: number | null },
+  nextAgentIdRef: { current: number },
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  webview: vscode.Webview | undefined,
+  persistAgents: () => void,
+): void {
+  if (copilotScanTimerRef.current) return;
+
+  // Seed with all existing sessions so we only react to truly new ones
+  try {
+    const entries = fs.readdirSync(copilotSessionDir);
+    for (const entry of entries) {
+      const eventsPath = path.join(copilotSessionDir, entry, 'events.jsonl');
+      try {
+        if (fs.statSync(eventsPath).isFile()) {
+          knownJsonlFiles.add(eventsPath);
+        }
+      } catch {
+        /* no events.jsonl in this dir */
+      }
+    }
+  } catch {
+    /* dir may not exist yet */
+  }
+
+  copilotScanTimerRef.current = setInterval(() => {
+    scanForNewCopilotSessions(
+      copilotSessionDir,
+      knownJsonlFiles,
+      activeAgentIdRef,
+      nextAgentIdRef,
+      agents,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
+  }, PROJECT_SCAN_INTERVAL_MS);
+}
+
+function scanForNewCopilotSessions(
+  copilotSessionDir: string,
+  knownJsonlFiles: Set<string>,
+  activeAgentIdRef: { current: number | null },
+  nextAgentIdRef: { current: number },
+  agents: Map<number, AgentState>,
+  fileWatchers: Map<number, fs.FSWatcher>,
+  pollingTimers: Map<number, ReturnType<typeof setInterval>>,
+  waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
+  permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
+  webview: vscode.Webview | undefined,
+  persistAgents: () => void,
+): void {
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(copilotSessionDir);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    const eventsPath = path.join(copilotSessionDir, entry, 'events.jsonl');
+    if (knownJsonlFiles.has(eventsPath)) continue;
+
+    try {
+      if (!fs.statSync(eventsPath).isFile()) continue;
+    } catch {
+      continue;
+    }
+
+    knownJsonlFiles.add(eventsPath);
+
+    // Only adopt if there's an active unowned terminal
+    const activeTerminal = vscode.window.activeTerminal;
+    if (!activeTerminal) continue;
+
+    let owned = false;
+    for (const agent of agents.values()) {
+      if (agent.terminalRef === activeTerminal) {
+        owned = true;
+        break;
+      }
+    }
+    if (owned) continue;
+
+    adoptTerminalForFile(
+      activeTerminal,
+      eventsPath,
+      copilotSessionDir,
+      nextAgentIdRef,
+      agents,
+      activeAgentIdRef,
+      fileWatchers,
+      pollingTimers,
+      waitingTimers,
+      permissionTimers,
+      webview,
+      persistAgents,
+    );
+  }
 }
 
 export function reassignAgentToFile(

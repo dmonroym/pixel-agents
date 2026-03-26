@@ -5,7 +5,6 @@ import { getAdapter } from './adapterRegistry.js';
 import type { ParsedEvent } from './cliAdapter.js';
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
-  MIN_ACTIVE_DISPLAY_MS,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
   TEXT_IDLE_DELAY_MS,
   TOOL_DONE_DELAY_MS,
@@ -83,9 +82,6 @@ export function formatToolStatus(toolName: string, input: Record<string, unknown
 /** Tools that behave as parent-of-subagent (clearing subagent state on completion) */
 const SUBAGENT_PARENT_TOOLS = new Set(['Task', 'Agent', 'task']);
 
-/** Pending delayed turnEnd timers — cancelled if new activity arrives */
-const turnEndTimers = new Map<number, ReturnType<typeof setTimeout>>();
-
 function executeTurnEnd(
   agentId: number,
   agents: Map<number, AgentState>,
@@ -93,12 +89,8 @@ function executeTurnEnd(
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
   webview: vscode.Webview | undefined,
 ): void {
-  turnEndTimers.delete(agentId);
   const agent = agents.get(agentId);
   if (!agent) return;
-
-  // If subagents became active during the delay, suppress
-  if (agent.activeSubagentCount > 0) return;
 
   cancelWaitingTimer(agentId, waitingTimers);
   cancelPermissionTimer(agentId, permissionTimers);
@@ -116,14 +108,6 @@ function executeTurnEnd(
   agent.permissionSent = false;
   agent.hadToolsInTurn = false;
   webview?.postMessage({ type: 'agentStatus', id: agentId, status: 'waiting' });
-}
-
-function cancelTurnEndTimer(agentId: number): void {
-  const timer = turnEndTimers.get(agentId);
-  if (timer) {
-    clearTimeout(timer);
-    turnEndTimers.delete(agentId);
-  }
 }
 
 export function processTranscriptLine(
@@ -155,7 +139,6 @@ export function processTranscriptLine(
     switch (event.kind) {
       case 'toolStart': {
         cancelWaitingTimer(agentId, waitingTimers);
-        cancelTurnEndTimer(agentId);
         // Clear permission state when new data flows from the main agent
         cancelPermissionTimer(agentId, permissionTimers);
         if (agent.permissionSent) {
@@ -221,17 +204,7 @@ export function processTranscriptLine(
           break;
         }
 
-        // When tools are still tracked (Copilot batches all events in one write),
-        // delay the turn-end so the active state renders visibly before going idle.
-        if (agent.activeToolIds.size > 0) {
-          cancelTurnEndTimer(agentId);
-          const timer = setTimeout(() => {
-            executeTurnEnd(agentId, agents, waitingTimers, permissionTimers, webview);
-          }, MIN_ACTIVE_DISPLAY_MS);
-          turnEndTimers.set(agentId, timer);
-        } else {
-          executeTurnEnd(agentId, agents, waitingTimers, permissionTimers, webview);
-        }
+        executeTurnEnd(agentId, agents, waitingTimers, permissionTimers, webview);
         break;
       }
 
@@ -244,7 +217,6 @@ export function processTranscriptLine(
 
       case 'userPrompt': {
         cancelWaitingTimer(agentId, waitingTimers);
-        cancelTurnEndTimer(agentId);
         clearAgentActivity(agent, agentId, permissionTimers, webview);
         agent.hadToolsInTurn = false;
         agent.activeSubagentCount = 0;

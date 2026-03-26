@@ -64,6 +64,8 @@ export interface Seat {
   /** Direction character faces when sitting (toward adjacent desk) */
   facingDir: Direction;
   assigned: boolean;
+  /** Whether this seat's chair is adjacent to a desk tile */
+  hasDeskAdjacent: boolean;
 }
 
 export interface FurnitureInstance {

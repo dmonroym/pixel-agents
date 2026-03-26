@@ -5,6 +5,7 @@ import * as vscode from 'vscode';
 
 import { getAdapter, getAvailableAdapterIds } from './adapterRegistry.js';
 import {
+  getCopilotSessionDir,
   getProjectDirPath,
   launchNewTerminal,
   persistAgents,
@@ -32,7 +33,7 @@ import {
   LAYOUT_REVISION_KEY,
   WORKSPACE_KEY_AGENT_SEATS,
 } from './constants.js';
-import { ensureProjectScan } from './fileWatcher.js';
+import { ensureCopilotScan, ensureProjectScan } from './fileWatcher.js';
 import type { LayoutWatcher } from './layoutPersistence.js';
 import { readLayoutFromFile, watchLayoutFile, writeLayoutToFile } from './layoutPersistence.js';
 import type { AgentState } from './types.js';
@@ -54,6 +55,7 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
   activeAgentId = { current: null as number | null };
   knownJsonlFiles = new Set<string>();
   projectScanTimer = { current: null as ReturnType<typeof setInterval> | null };
+  copilotScanTimer = { current: null as ReturnType<typeof setInterval> | null };
 
   // Bundled default layout (loaded from assets/default-layout.json)
   defaultLayout: Record<string, unknown> | null = null;
@@ -189,6 +191,23 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
             this.persistAgents,
           );
         }
+
+        // Also scan Copilot session directory for external Copilot terminals
+        const copilotDir = getCopilotSessionDir();
+        ensureCopilotScan(
+          copilotDir,
+          this.knownJsonlFiles,
+          this.copilotScanTimer,
+          this.activeAgentId,
+          this.nextAgentId,
+          this.agents,
+          this.fileWatchers,
+          this.pollingTimers,
+          this.waitingTimers,
+          this.permissionTimers,
+          this.webview,
+          this.persistAgents,
+        );
 
         // Load furniture assets BEFORE sending layout
         (async () => {
@@ -480,6 +499,10 @@ export class PixelAgentsViewProvider implements vscode.WebviewViewProvider {
     if (this.projectScanTimer.current) {
       clearInterval(this.projectScanTimer.current);
       this.projectScanTimer.current = null;
+    }
+    if (this.copilotScanTimer.current) {
+      clearInterval(this.copilotScanTimer.current);
+      this.copilotScanTimer.current = null;
     }
   }
 }
