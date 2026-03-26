@@ -252,10 +252,20 @@ export async function launchNewTerminal(
           );
         }
         if (session) {
-          // Check if another agent already claimed this session
-          if (knownJsonlFiles.has(session.jsonlPath)) {
+          // Check if another agent already claimed this session file.
+          // We check actual agent assignments rather than knownJsonlFiles,
+          // because the background Copilot scanner may add paths to
+          // knownJsonlFiles before this agent's poll can claim them.
+          let claimedByOther = false;
+          for (const [otherId, otherAgent] of agents) {
+            if (otherId !== id && otherAgent.jsonlFile === session.jsonlPath) {
+              claimedByOther = true;
+              break;
+            }
+          }
+          if (claimedByOther) {
             console.log(
-              `[Pixel Agents] Agent ${id}: session ${session.sessionId.slice(0, 8)} already claimed, skipping`,
+              `[Pixel Agents] Agent ${id}: session ${session.sessionId.slice(0, 8)} already claimed by another agent, skipping`,
             );
             knownSessions.add(session.sessionId);
             return; // Skip, keep polling for a different session
