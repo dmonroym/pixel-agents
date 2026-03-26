@@ -272,9 +272,6 @@ export async function launchNewTerminal(
             waitingTimers,
             permissionTimers,
             webview,
-            knownJsonlFiles,
-            persistAgents,
-            cwd,
           );
           readNewLines(id, agents, waitingTimers, permissionTimers, webview);
         }

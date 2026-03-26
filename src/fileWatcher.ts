@@ -2,13 +2,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-import { getAdapter } from './adapterRegistry.js';
-import { CLI_ADAPTER_IDS, type CliAdapterId, SESSION_STRATEGIES } from './cliAdapter.js';
-import {
-  FILE_WATCHER_POLL_INTERVAL_MS,
-  PROJECT_SCAN_INTERVAL_MS,
-  SESSION_STALE_THRESHOLD_MS,
-} from './constants.js';
+import { CLI_ADAPTER_IDS, type CliAdapterId } from './cliAdapter.js';
+import { FILE_WATCHER_POLL_INTERVAL_MS, PROJECT_SCAN_INTERVAL_MS } from './constants.js';
 import { cancelPermissionTimer, cancelWaitingTimer, clearAgentActivity } from './timerManager.js';
 import { processTranscriptLine } from './transcriptParser.js';
 import type { AgentState } from './types.js';
@@ -31,9 +26,6 @@ export function startFileWatching(
   waitingTimers: Map<number, ReturnType<typeof setTimeout>>,
   permissionTimers: Map<number, ReturnType<typeof setTimeout>>,
   webview: vscode.Webview | undefined,
-  knownJsonlFiles?: Set<string>,
-  persistAgents?: () => void,
-  workspacePath?: string,
 ): void {
   // Single polling approach: reliable on all platforms (macOS, Linux, WSL2, Windows).
   // Previously used triple-redundant fs.watch + fs.watchFile + setInterval, but
@@ -41,57 +33,11 @@ export function startFileWatching(
   // agent doing synchronous I/O. The manual poll at 500ms is fast enough for a
   // pixel art visualization and works everywhere.
   const interval = setInterval(() => {
-    const agent = agents.get(agentId);
-    if (!agent) {
+    if (!agents.has(agentId)) {
       clearInterval(interval);
       return;
     }
     readNewLines(agentId, agents, waitingTimers, permissionTimers, webview);
-
-    // Session re-detection for detective-strategy CLIs (Copilot).
-    // When /resume switches to a different session, the old events.jsonl goes stale.
-    // After SESSION_STALE_THRESHOLD_MS of no data, re-scan for a newer session.
-    if (knownJsonlFiles && persistAgents) {
-      const adapter = getAdapter(agent.cliAdapterId);
-      if (
-        adapter?.sessionStrategy === SESSION_STRATEGIES.detective &&
-        agent.lastDataAt > 0 &&
-        Date.now() - agent.lastDataAt > SESSION_STALE_THRESHOLD_MS
-      ) {
-        const claimedSessionIds = new Set<string>();
-        for (const [otherId, otherAgent] of agents) {
-          if (
-            otherId !== agentId &&
-            otherAgent.cliAdapterId === agent.cliAdapterId &&
-            otherAgent.jsonlFile
-          ) {
-            claimedSessionIds.add(path.basename(path.dirname(otherAgent.jsonlFile)));
-          }
-        }
-        // Also claim our own current session so we don't re-find it
-        if (agent.jsonlFile) {
-          claimedSessionIds.add(path.basename(path.dirname(agent.jsonlFile)));
-        }
-
-        const session = adapter.findNewSession?.(
-          claimedSessionIds,
-          agent.lastDataAt,
-          workspacePath,
-        );
-        if (session) {
-          console.log(
-            `[Pixel Agents] Agent ${agentId}: session went stale, switching to ${session.sessionId.slice(0, 8)}...`,
-          );
-          agent.jsonlFile = session.jsonlPath;
-          agent.fileOffset = 0;
-          agent.lineBuffer = '';
-          agent.lastDataAt = Date.now();
-          knownJsonlFiles.add(session.jsonlPath);
-          clearAgentActivity(agent, agentId, permissionTimers, webview);
-          persistAgents();
-        }
-      }
-    }
   }, FILE_WATCHER_POLL_INTERVAL_MS);
   pollingTimers.set(agentId, interval);
 }

@@ -3,8 +3,10 @@ import type * as vscode from 'vscode';
 
 import { getAdapter } from './adapterRegistry.js';
 import type { ParsedEvent } from './cliAdapter.js';
+import { SESSION_STRATEGIES } from './cliAdapter.js';
 import {
   BASH_COMMAND_DISPLAY_MAX_LENGTH,
+  COPILOT_TURN_END_DELAY_MS,
   TASK_DESCRIPTION_DISPLAY_MAX_LENGTH,
   TEXT_IDLE_DELAY_MS,
   TOOL_DONE_DELAY_MS,
@@ -207,6 +209,37 @@ export function processTranscriptLine(
           break;
         }
 
+        // In Copilot's event model, assistant.turn_end fires BEFORE subagent.started.
+        // If there are active tools that spawn subagents (Task/task/Agent), suppress
+        // turnEnd — the subagent.started events are about to arrive.
+        let hasActiveSubagentParent = false;
+        for (const toolName of agent.activeToolNames.values()) {
+          if (SUBAGENT_PARENT_TOOLS.has(toolName)) {
+            hasActiveSubagentParent = true;
+            break;
+          }
+        }
+        if (hasActiveSubagentParent) {
+          console.log(
+            `[Pixel Agents] Agent ${agentId} turnEnd suppressed (active subagent parent tools)`,
+          );
+          break;
+        }
+
+        // For detective-strategy CLIs (Copilot), assistant.turn_end fires between
+        // every tool batch — not just at the final idle point. Delay the turn end
+        // so it only fires after sustained silence. The timer is cancelled by
+        // readNewLines when new JSONL data arrives.
+        if (adapter?.sessionStrategy === SESSION_STRATEGIES.detective) {
+          cancelWaitingTimer(agentId, waitingTimers);
+          const timer = setTimeout(() => {
+            waitingTimers.delete(agentId);
+            executeTurnEnd(agentId, agents, waitingTimers, permissionTimers, webview);
+          }, COPILOT_TURN_END_DELAY_MS);
+          waitingTimers.set(agentId, timer);
+          break;
+        }
+
         executeTurnEnd(agentId, agents, waitingTimers, permissionTimers, webview);
         break;
       }
@@ -331,11 +364,27 @@ export function processTranscriptLine(
         console.log(
           `[Pixel Agents] Agent ${agentId} subagent completed (${agent.activeSubagentCount} remaining)`,
         );
+
+        // Clean up the parent tool (Copilot's tool.execution_complete maps to
+        // toolExecuting, not toolDone, so the parent tool is never explicitly
+        // removed — we must do it here when the subagent finishes).
+        const parentId = event.parentToolId;
+        agent.activeToolIds.delete(parentId);
+        agent.activeToolStatuses.delete(parentId);
+        agent.activeToolNames.delete(parentId);
+        agent.activeSubagentToolIds.delete(parentId);
+        agent.activeSubagentToolNames.delete(parentId);
+
         webview?.postMessage({
           type: 'subagentClear',
           id: agentId,
-          parentToolId: event.parentToolId,
+          parentToolId: parentId,
         });
+
+        const toolId = parentId;
+        setTimeout(() => {
+          webview?.postMessage({ type: 'agentToolDone', id: agentId, toolId });
+        }, TOOL_DONE_DELAY_MS);
         break;
       }
 
