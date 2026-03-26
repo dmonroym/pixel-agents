@@ -75,8 +75,6 @@ export const copilotAdapter: CliAdapter = {
       return null;
     }
 
-    let newest: { sessionId: string; jsonlPath: string; mtime: number } | null = null;
-
     let entries: string[];
     try {
       entries = readdirSync(watchDir);
@@ -87,50 +85,55 @@ export const copilotAdapter: CliAdapter = {
     // Normalize workspace path for case-insensitive comparison on Windows
     const normalizedWorkspace = workspacePath ? normalize(workspacePath).toLowerCase() : null;
 
+    // Two-pass: prefer workspace-matching sessions, fall back to any active session.
+    // Copilot may set its cwd to home dir even when terminal cwd is the workspace.
+    let bestMatch: { sessionId: string; jsonlPath: string; mtime: number } | null = null;
+    let bestFallback: { sessionId: string; jsonlPath: string; mtime: number } | null = null;
+
     for (const entry of entries) {
-      // Skip sessions already assigned to other agents
       if (claimedSessionIds.has(entry)) {
         continue;
       }
       const eventsPath = join(watchDir, entry, 'events.jsonl');
       try {
         const stat = statSync(eventsPath);
-        if (stat.isFile()) {
-          const mtime = stat.mtimeMs;
-          // Only consider sessions modified after the poll started.
-          // Copilot reuses session directories, so we can't rely on
-          // "new directory" detection — we need to find recently active sessions.
-          if (mtime < sinceTimestamp) continue;
+        if (!stat.isFile()) continue;
+        const mtime = stat.mtimeMs;
+        if (mtime < sinceTimestamp) continue;
 
-          // If workspace path is provided, match against session's cwd from workspace.yaml
-          if (normalizedWorkspace) {
-            const wsYamlPath = join(watchDir, entry, 'workspace.yaml');
-            try {
-              const wsContent = readFileSync(wsYamlPath, 'utf8');
-              const cwdMatch = wsContent.match(/^cwd:\s*(.+)$/m);
-              if (cwdMatch) {
-                const sessionCwd = normalize(cwdMatch[1].trim()).toLowerCase();
-                if (sessionCwd !== normalizedWorkspace) continue;
-              }
-            } catch {
-              // No workspace.yaml or can't read — skip this session
-              continue;
+        // Check workspace match from workspace.yaml
+        let workspaceMatches = false;
+        if (normalizedWorkspace) {
+          const wsYamlPath = join(watchDir, entry, 'workspace.yaml');
+          try {
+            const wsContent = readFileSync(wsYamlPath, 'utf8');
+            const cwdMatch = wsContent.match(/^cwd:\s*(.+)$/m);
+            if (cwdMatch) {
+              const sessionCwd = normalize(cwdMatch[1].trim()).toLowerCase();
+              workspaceMatches = sessionCwd === normalizedWorkspace;
             }
+          } catch {
+            // No workspace.yaml — treat as non-matching
           }
+        }
 
-          if (newest === null || mtime > newest.mtime) {
-            newest = { sessionId: entry, jsonlPath: eventsPath, mtime };
+        if (workspaceMatches) {
+          if (bestMatch === null || mtime > bestMatch.mtime) {
+            bestMatch = { sessionId: entry, jsonlPath: eventsPath, mtime };
+          }
+        } else {
+          if (bestFallback === null || mtime > bestFallback.mtime) {
+            bestFallback = { sessionId: entry, jsonlPath: eventsPath, mtime };
           }
         }
       } catch {
-        // events.jsonl doesn't exist in this directory — skip
+        // events.jsonl doesn't exist — skip
       }
     }
 
-    if (newest === null) {
-      return null;
-    }
-    return { sessionId: newest.sessionId, jsonlPath: newest.jsonlPath };
+    // Prefer workspace match, fall back to newest active session
+    const result = bestMatch ?? bestFallback;
+    return result ? { sessionId: result.sessionId, jsonlPath: result.jsonlPath } : null;
   },
 
   parseTranscriptLine(line: string): ParsedEvent[] {
