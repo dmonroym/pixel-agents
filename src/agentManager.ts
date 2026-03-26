@@ -242,6 +242,11 @@ export async function launchNewTerminal(
       try {
         const session = adapter.findNewSession!(knownSessions);
         if (session) {
+          // Check if another agent already claimed this session
+          if (knownJsonlFiles.has(session.jsonlPath)) {
+            knownSessions.add(session.sessionId);
+            return; // Skip, keep polling for a different session
+          }
           knownSessions.add(session.sessionId);
           agent.jsonlFile = session.jsonlPath;
           agent.projectDir = watchDir;
@@ -262,8 +267,8 @@ export async function launchNewTerminal(
           );
           readNewLines(id, agents, waitingTimers, permissionTimers, webview);
         }
-      } catch {
-        /* session dir may not exist yet */
+      } catch (e) {
+        console.log(`[Pixel Agents] Agent ${id}: session poll error: ${e}`);
       }
     }, JSONL_POLL_INTERVAL_MS);
     jsonlPollTimers.set(id, pollTimer);
