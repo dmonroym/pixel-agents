@@ -134,11 +134,17 @@ export interface CliAdapter {
   getSessionWatchDir?(): string;
 
   /**
-   * Find a new session that appeared since last check.
-   * @param knownSessions - set of session IDs already known
-   * @returns the new session info, or null if none found
+   * Find a new or resumed session.
+   * @param claimedSessionIds - set of session IDs already assigned to agents
+   * @param sinceTimestamp - only consider sessions with events modified after this time (ms)
+   * @param workspacePath - optional workspace path to match against session's cwd
+   * @returns the session info, or null if none found
    */
-  findNewSession?(knownSessions: Set<string>): DetectedSession | null;
+  findNewSession?(
+    claimedSessionIds: Set<string>,
+    sinceTimestamp: number,
+    workspacePath?: string,
+  ): DetectedSession | null;
 
   // ── Transcript Parsing ───────────────────────────────────
   /**

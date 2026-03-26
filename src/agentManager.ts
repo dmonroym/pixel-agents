@@ -181,32 +181,12 @@ export async function launchNewTerminal(
     // ── Detective strategy (Copilot): discover the session after launch ──
     const watchDir = adapter.getSessionWatchDir!();
 
-    // Build set of already-known session IDs from existing agents using this adapter
-    const knownSessions = new Set<string>();
-    for (const a of agents.values()) {
-      if (a.cliAdapterId === adapter.id && a.jsonlFile) {
-        const sessionDir = path.dirname(a.jsonlFile);
-        knownSessions.add(path.basename(sessionDir));
-      }
-    }
-    // Pre-scan BEFORE sending the command — if Copilot creates the session
-    // directory quickly, a post-send scan would mark the new session as "known"
-    // and the poll would never discover it.
-    if (adapter.findNewSession) {
-      try {
-        const entries = fs.readdirSync(watchDir);
-        for (const entry of entries) {
-          knownSessions.add(entry);
-        }
-        console.log(
-          `[Pixel Agents] Agent ${id}: pre-scanned ${knownSessions.size} known sessions in ${watchDir}`,
-        );
-      } catch {
-        /* watch dir may not exist yet */
-      }
-    }
+    // Record timestamp BEFORE launching — we'll find sessions modified after this.
+    // Copilot reuses session directories, so we can't rely on "new directory"
+    // detection. Instead we find the most recently modified events.jsonl that
+    // appeared/changed after we started looking.
+    const pollStartTime = Date.now();
 
-    // Now launch the CLI — any new session directory it creates will be "unknown"
     const cmd = adapter.buildCommand({ bypassPermissions: !!bypassPermissions });
     terminal.sendText(cmd);
 
@@ -242,37 +222,27 @@ export async function launchNewTerminal(
     );
     webview?.postMessage({ type: 'agentCreated', id, folderName });
 
-    // Poll for new session to appear
+    // Poll for new/resumed session to appear
     let pollCount = 0;
     const pollTimer = setInterval(() => {
       pollCount++;
       try {
-        const session = adapter.findNewSession!(knownSessions);
-        if (pollCount <= 3 || (pollCount % 10 === 0 && pollCount <= 30)) {
+        // Build set of session IDs already assigned to OTHER agents
+        const claimedSessionIds = new Set<string>();
+        for (const [otherId, otherAgent] of agents) {
+          if (otherId !== id && otherAgent.cliAdapterId === adapter.id && otherAgent.jsonlFile) {
+            const sessionDir = path.dirname(otherAgent.jsonlFile);
+            claimedSessionIds.add(path.basename(sessionDir));
+          }
+        }
+
+        const session = adapter.findNewSession!(claimedSessionIds, pollStartTime, cwd);
+        if (pollCount <= 3 || (pollCount % 10 === 0 && pollCount <= 60)) {
           console.log(
             `[Pixel Agents] Agent ${id}: poll #${pollCount} → ${session ? `found ${session.sessionId.slice(0, 8)}...` : 'null'}`,
           );
         }
         if (session) {
-          // Check if another agent already claimed this session file.
-          // We check actual agent assignments rather than knownJsonlFiles,
-          // because the background Copilot scanner may add paths to
-          // knownJsonlFiles before this agent's poll can claim them.
-          let claimedByOther = false;
-          for (const [otherId, otherAgent] of agents) {
-            if (otherId !== id && otherAgent.jsonlFile === session.jsonlPath) {
-              claimedByOther = true;
-              break;
-            }
-          }
-          if (claimedByOther) {
-            console.log(
-              `[Pixel Agents] Agent ${id}: session ${session.sessionId.slice(0, 8)} already claimed by another agent, skipping`,
-            );
-            knownSessions.add(session.sessionId);
-            return; // Skip, keep polling for a different session
-          }
-
           // FIFO: only claim if no older agent (lower ID) is also waiting for a session.
           // This prevents Agent 2 from stealing Agent 1's session.
           let olderAgentWaiting = false;
@@ -286,7 +256,6 @@ export async function launchNewTerminal(
             return; // Let the older agent claim it on their next poll
           }
 
-          knownSessions.add(session.sessionId);
           agent.jsonlFile = session.jsonlPath;
           agent.projectDir = watchDir;
           knownJsonlFiles.add(session.jsonlPath);

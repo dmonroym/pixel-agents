@@ -6,9 +6,9 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, readdirSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, normalize } from 'path';
 
 import type { CliAdapter, ParsedEvent } from '../cliAdapter.js';
 import { CLI_ADAPTER_IDS, PARSED_EVENT_KINDS, SESSION_STRATEGIES } from '../cliAdapter.js';
@@ -65,7 +65,11 @@ export const copilotAdapter: CliAdapter = {
     return join(homedir(), '.copilot', 'session-state');
   },
 
-  findNewSession(knownSessions: Set<string>): { sessionId: string; jsonlPath: string } | null {
+  findNewSession(
+    claimedSessionIds: Set<string>,
+    sinceTimestamp: number,
+    workspacePath?: string,
+  ): { sessionId: string; jsonlPath: string } | null {
     const watchDir = this.getSessionWatchDir!();
     if (!existsSync(watchDir)) {
       return null;
@@ -80,8 +84,12 @@ export const copilotAdapter: CliAdapter = {
       return null;
     }
 
+    // Normalize workspace path for case-insensitive comparison on Windows
+    const normalizedWorkspace = workspacePath ? normalize(workspacePath).toLowerCase() : null;
+
     for (const entry of entries) {
-      if (knownSessions.has(entry)) {
+      // Skip sessions already assigned to other agents
+      if (claimedSessionIds.has(entry)) {
         continue;
       }
       const eventsPath = join(watchDir, entry, 'events.jsonl');
@@ -89,6 +97,27 @@ export const copilotAdapter: CliAdapter = {
         const stat = statSync(eventsPath);
         if (stat.isFile()) {
           const mtime = stat.mtimeMs;
+          // Only consider sessions modified after the poll started.
+          // Copilot reuses session directories, so we can't rely on
+          // "new directory" detection — we need to find recently active sessions.
+          if (mtime < sinceTimestamp) continue;
+
+          // If workspace path is provided, match against session's cwd from workspace.yaml
+          if (normalizedWorkspace) {
+            const wsYamlPath = join(watchDir, entry, 'workspace.yaml');
+            try {
+              const wsContent = readFileSync(wsYamlPath, 'utf8');
+              const cwdMatch = wsContent.match(/^cwd:\s*(.+)$/m);
+              if (cwdMatch) {
+                const sessionCwd = normalize(cwdMatch[1].trim()).toLowerCase();
+                if (sessionCwd !== normalizedWorkspace) continue;
+              }
+            } catch {
+              // No workspace.yaml or can't read — skip this session
+              continue;
+            }
+          }
+
           if (newest === null || mtime > newest.mtime) {
             newest = { sessionId: entry, jsonlPath: eventsPath, mtime };
           }
